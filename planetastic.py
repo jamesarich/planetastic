@@ -232,7 +232,7 @@ def main():
         try:
             if args.meshtastic_host:
                 print(f"Attempting to connect to Meshtastic device at {args.meshtastic_host}:{args.meshtastic_port}...")
-                args.meshtastic_interface = meshtastic.tcp_interface.TCPInterface(hostname=args.meshtastic_host, port=args.meshtastic_port)
+                args.meshtastic_interface = meshtastic.tcp_interface.TCPInterface(hostname=args.meshtastic_host, portNumber=args.meshtastic_port)
             else:
                 print("Attempting to connect to local Meshtastic device via serial...")
                 args.meshtastic_interface = meshtastic.serial_interface.SerialInterface()
