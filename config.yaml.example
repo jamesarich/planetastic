@@ -1,0 +1,37 @@
+# Example configuration file for the ADSB to Meshtastic Connector.
+#
+# To use this file:
+# 1. Copy it to 'config.yaml'
+# 2. Uncomment and edit the settings you want to change.
+# 3. Run the script with the '--config config.yaml' argument.
+#
+# Any command-line argument will override the values in this file.
+
+# --- dump1090 Settings ---
+# The hostname or IP address of your dump1090 instance.
+# dump1090_host: localhost
+# The port for the dump1090 SBS-1 stream.
+# dump1090_port: 30003
+
+# --- Meshtastic Device Settings ---
+# To connect to a remote Meshtastic device over the network, specify its host.
+# If this is commented out, the script will search for a local serial device.
+# meshtastic_host: 192.168.1.100
+# The TCP port for the network-connected Meshtastic device.
+# meshtastic_port: 4403
+# Set to true to disable all attempts to connect to a physical Meshtastic device.
+# no_meshtastic: false
+
+# --- MUDP Broadcasting Settings ---
+# Set to true to enable MUDP broadcasting on the local network.
+# mudp: false
+# The MUDP multicast group address.
+# mudp_host: 224.0.0.69
+# The MUDP multicast port.
+# mudp_port: 4403
+
+# --- MUDP Gateway Identity ---
+# The static node identity to use for all MUDP broadcasts.
+# mudp_node_id: '!adsb-gw'
+# mudp_node_longname: 'ADSB Gateway'
+# mudp_node_shortname: 'ADSB'
