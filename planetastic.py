@@ -182,7 +182,7 @@ def format_meshtastic_message(aircraft_data):
     lat_str = f"{abs(lat):.2f}{'N' if lat >= 0 else 'S'}"
     lon_str = f"{abs(lon):.2f}{'E' if lon >= 0 else 'W'}"
 
-    return f"{callsign} {altitude}ft {lat_str}/{lon_str}"
+    return f"✈️{callsign} {altitude}ft {lat_str}/{lon_str}"
 
 
 def parse_adsb_message(message_str):
