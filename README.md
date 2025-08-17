@@ -2,6 +2,9 @@
 
 This project provides a Python script, `planetastic.py`, that connects a local ADSB receiver (like `dump1090`) to a Meshtastic network. It listens for aircraft data and broadcasts selected information to your personal mesh or local network.
 
+<img width="1272" height="788" alt="image" src="https://github.com/user-attachments/assets/fdccde47-daef-4959-a729-52567059292b" />
+
+
 ## How It Works
 
 The script connects to a running `dump1090` instance, which is responsible for receiving and demodulating ADSB signals from an SDR. It reads the parsed aircraft data stream (in SBS-1 format), which is often fragmented across multiple messages for a single aircraft.
