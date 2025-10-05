@@ -254,19 +254,42 @@ def process_adsb_message(message, args, aircraft_db, last_sent_time):
 
 def format_meshtastic_message(aircraft_data):
     """
-    Formats aircraft data into a concise string for Meshtastic.
-    Example: "BAW123 38000ft 51.5N/0.1W"
+    Formats aircraft data into a multi-line string for Meshtastic,
+    ensuring it is under the 200-byte limit.
+
+    Example:
+    ✈️ BAW123
+    Alt: 38000ft
+    Spd: 450kt
+    Pos: 51.5000N, 0.1000W
     """
+    MAX_LENGTH = 200
     callsign = aircraft_data.get("callsign", "N/A").strip()
-    altitude = aircraft_data.get("altitude", 0)
-    lat = aircraft_data.get("lat", 0.0)
-    lon = aircraft_data.get("lon", 0.0)
+    altitude = aircraft_data.get("altitude")
+    ground_speed = aircraft_data.get("ground_speed")
+    lat = aircraft_data.get("lat")
+    lon = aircraft_data.get("lon")
 
-    # Format latitude and longitude
-    lat_str = f"{abs(lat):.2f}{'N' if lat >= 0 else 'S'}"
-    lon_str = f"{abs(lon):.2f}{'E' if lon >= 0 else 'W'}"
+    # Build the message line by line, ensuring it fits within MAX_LENGTH
+    final_lines = [f"✈️{callsign}"]
 
-    return f"✈️{callsign} {altitude}ft {lat_str}/{lon_str}"
+    potential_additions = []
+    if altitude is not None:
+        potential_additions.append(f"Alt: {altitude}ft")
+    if ground_speed is not None:
+        potential_additions.append(f"Spd: {ground_speed}kt")
+    if lat is not None and lon is not None:
+        lat_str = f"{abs(lat):.4f}{'N' if lat >= 0 else 'S'}"
+        lon_str = f"{abs(lon):.4f}{'E' if lon >= 0 else 'W'}"
+        potential_additions.append(f"Pos: {lat_str}, {lon_str}")
+
+    for line in potential_additions:
+        # Check if adding the new line exceeds the length limit (+1 for newline)
+        if len("\n".join(final_lines + [line]).encode('utf-8')) > MAX_LENGTH:
+            break
+        final_lines.append(line)
+
+    return "\n".join(final_lines)
 
 
 def parse_adsb_message(message_str):
