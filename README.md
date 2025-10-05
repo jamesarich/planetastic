@@ -115,6 +115,25 @@ If the script reports "No local Meshtastic device found", it means it could not 
 -   Ensure your device is properly connected.
 -   If your device is network-connected, you must specify its IP address using the `--meshtastic-host` argument.
 
+## Development
+
+To contribute to this project, you'll need to set up a development environment.
+
+1.  **Install development dependencies:**
+    ```bash
+    pip install -r requirements-dev.txt
+    ```
+
+2.  **Set up pre-commit hooks:**
+    This project uses `pre-commit` to ensure code quality. The hooks will automatically format and lint your code before you commit.
+    ```bash
+    pre-commit install
+    ```
+    Now, every time you commit, the hooks will run. You can also run them manually on all files:
+    ```bash
+    pre-commit run --all-files
+    ```
+
 ## Acknowledgements
 
 This project is built upon the great work of the following open-source projects:
