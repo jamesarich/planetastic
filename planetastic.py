@@ -1,11 +1,20 @@
+"""
+Planetastic: An ADSB to Meshtastic Connector
+Version: 2.1.0
+Author: James Rich <james.a.rich@gmail.com>
+License: GPL-3.0-or-later
+"""
 import socket
 import time
 import argparse
 import yaml
 import os
-import meshtastic
-import meshtastic.serial_interface
-import meshtastic.tcp_interface
+try:
+    import meshtastic
+    import meshtastic.serial_interface
+    import meshtastic.tcp_interface
+except ImportError:
+    meshtastic = None
 
 try:
     from mudp import conn, node, send_text_message
@@ -14,10 +23,22 @@ except ImportError:
     node = None
     send_text_message = None
 
+from db import DatabaseManager
+from web import DashboardServer
+from utils import calculate_distance
+
+# --- Logging Setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # --- Constants ---
 CONNECT_ATTEMPT_DELAY = 5
 CONNECT_ATTEMPT_LIMIT = 10
+DB_FILENAME = "planetastic.db"
 
 # --- SBS-1 Message Fields ---
 SBS1_FIELDS = [
@@ -45,360 +66,267 @@ SBS1_FIELDS = [
     "is_on_ground",
 ]
 
+@dataclass
+class Config:
+    dump1090_host: str
+    dump1090_port: int
+    meshtastic_host: Optional[str]
+    meshtastic_port: int
+    no_meshtastic: bool
+    mudp: bool
+    mudp_host: str
+    mudp_port: int
+    mudp_node_id: str
+    mudp_node_longname: str
+    mudp_node_shortname: str
+    update_interval: int
+    home_lat: Optional[float]
+    home_lon: Optional[float]
+    radius: Optional[float]
+    min_alt: Optional[int]
+    max_alt: Optional[int]
+    web_port: int
+    debug: bool
+    config_path: Optional[str] = None
 
-def setup_args():
+def setup_config() -> Config:
     """
-    Sets up the command-line arguments, loading defaults from a config file
-    if specified.
+    Sets up the configuration, loading defaults from a config file if specified.
     """
-    # First, parse for the config file path
-    conf_parser = argparse.ArgumentParser(
-        description="A connector between dump1090 and Meshtastic.", add_help=False
-    )
-    conf_parser.add_argument("--config", help="Path to a YAML configuration file.")
+    conf_parser = argparse.ArgumentParser(description="A connector between dump1090 and Meshtastic.", add_help=False)
+    conf_parser.add_argument('--config', help='Path to a YAML configuration file.')
     args, remaining_argv = conf_parser.parse_known_args()
 
-    config = {}
-    if args.config:
-        if os.path.exists(args.config):
-            with open(args.config, "r") as f:
-                config = yaml.safe_load(f)
-        else:
-            print(f"Warning: Config file not found at {args.config}")
+    config_data = {}
+    if args.config and os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            config_data = yaml.safe_load(f) or {}
 
-    # Now, parse all arguments, using config file values as defaults
     parser = argparse.ArgumentParser(parents=[conf_parser])
-    parser.add_argument(
-        "--dump1090-host",
-        default=config.get("dump1090_host", "localhost"),
-        help="The hostname or IP address of the dump1090 instance.",
-    )
-    parser.add_argument(
-        "--dump1090-port",
-        type=int,
-        default=config.get("dump1090_port", 30003),
-        help="The port for the dump1090 SBS-1 stream.",
-    )
-    parser.add_argument(
-        "--meshtastic-host",
-        default=config.get("meshtastic_host"),
-        help="The hostname or IP address of the Meshtastic device.",
-    )
-    parser.add_argument(
-        "--meshtastic-port",
-        type=int,
-        default=config.get("meshtastic_port", 4403),
-        help="The TCP port of the Meshtastic device (default: 4403).",
-    )
-    parser.add_argument(
-        "--no-meshtastic",
-        action="store_true",
-        default=config.get("no_meshtastic", False),
-        help="Run without connecting to Meshtastic (for debugging).",
-    )
-    parser.add_argument(
-        "--mudp",
-        action="store_true",
-        default=config.get("mudp", False),
-        help="Enable MUDP broadcasting to the local network.",
-    )
-    parser.add_argument(
-        "--mudp-host",
-        default=config.get("mudp_host", "224.0.0.69"),
-        help="The MUDP multicast group address (default: 224.0.0.69).",
-    )
-    parser.add_argument(
-        "--mudp-port",
-        type=int,
-        default=config.get("mudp_port", 4403),
-        help="The MUDP multicast port (default: 4403).",
-    )
-    # General arguments
-    parser.add_argument(
-        "--update-interval",
-        type=int,
-        default=config.get("update_interval", 300),
-        help="Seconds before sending a new update for the same aircraft.",
-    )
-    # MUDP Node Identity Arguments
-    parser.add_argument(
-        "--mudp-node-id",
-        default=config.get("mudp_node_id", "!adsb-gw"),
-        help="The static node ID for MUDP broadcasts.",
-    )
-    parser.add_argument(
-        "--mudp-node-longname",
-        default=config.get("mudp_node_longname", "ADSB Gateway"),
-        help="The static node long name for MUDP broadcasts.",
-    )
-    parser.add_argument(
-        "--mudp-node-shortname",
-        default=config.get("mudp_node_shortname", "ADSB"),
-        help="The static node short name for MUDP broadcasts.",
+    parser.add_argument('--dump1090-host', default=config_data.get('dump1090_host', os.environ.get('DUMP1090_HOST', 'localhost')))
+    parser.add_argument('--dump1090-port', type=int, default=config_data.get('dump1090_port', int(os.environ.get('DUMP1090_PORT', '30003'))))
+    parser.add_argument('--meshtastic-host', default=config_data.get('meshtastic_host', os.environ.get('MESHTASTIC_HOST')))
+    parser.add_argument('--meshtastic-port', type=int, default=config_data.get('meshtastic_port', int(os.environ.get('MESHTASTIC_PORT', '4403'))))
+    parser.add_argument('--no-meshtastic', action='store_true', default=config_data.get('no_meshtastic', False))
+    parser.add_argument('--mudp', action='store_true', default=config_data.get('mudp', False))
+    parser.add_argument('--mudp-host', default=config_data.get('mudp_host', '224.0.0.69'))
+    parser.add_argument('--mudp-port', type=int, default=config_data.get('mudp_port', 4403))
+    parser.add_argument('--update-interval', type=int, default=config_data.get('update_interval', 300))
+    parser.add_argument('--mudp-node-id', default=config_data.get('mudp_node_id', '!adsb-gw'))
+    parser.add_argument('--mudp-node-longname', default=config_data.get('mudp_node_longname', 'ADSB Gateway'))
+    parser.add_argument('--mudp-node-shortname', default=config_data.get('mudp_node_shortname', 'ADSB'))
+    parser.add_argument('--home-lat', type=float, default=config_data.get('home_lat'))
+    parser.add_argument('--home-lon', type=float, default=config_data.get('home_lon'))
+    parser.add_argument('--radius', type=float, default=config_data.get('radius'))
+    parser.add_argument('--min-alt', type=int, default=config_data.get('min_alt'))
+    parser.add_argument('--max-alt', type=int, default=config_data.get('max_alt'))
+    parser.add_argument('--web-port', type=int, default=config_data.get('web_port', 8080))
+    parser.add_argument('--debug', action='store_true', default=config_data.get('debug', False))
+    parser.add_argument('--version', action='version', version='Planetastic 2.1.0')
+
+    ns = parser.parse_args(remaining_argv)
+    
+    if ns.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
+    return Config(
+        dump1090_host=ns.dump1090_host,
+        dump1090_port=ns.dump1090_port,
+        meshtastic_host=ns.meshtastic_host,
+        meshtastic_port=ns.meshtastic_port,
+        no_meshtastic=ns.no_meshtastic,
+        mudp=ns.mudp,
+        mudp_host=ns.mudp_host,
+        mudp_port=ns.mudp_port,
+        mudp_node_id=ns.mudp_node_id,
+        mudp_node_longname=ns.mudp_node_longname,
+        mudp_node_shortname=ns.mudp_node_shortname,
+        update_interval=ns.update_interval,
+        home_lat=ns.home_lat,
+        home_lon=ns.home_lon,
+        radius=ns.radius,
+        min_alt=ns.min_alt,
+        max_alt=ns.max_alt,
+        web_port=ns.web_port,
+        debug=ns.debug,
+        config_path=args.config
     )
 
-    # Set defaults from config for boolean flags, allowing command line to override
-    parser.set_defaults(no_meshtastic=config.get("no_meshtastic", False))
-    parser.set_defaults(mudp=config.get("mudp", False))
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        default=config.get("debug", False),
-        help="Enable debug logging to print raw data from dump1090.",
-    )
-    parser.set_defaults(debug=config.get("debug", False))
-
-    return parser.parse_args(remaining_argv)
-
-
-def connect_to_dump1090(host, port, debug=False):
+async def config_watcher(config: Config) -> None:
     """
-    Connects to the dump1090 TCP stream and yields lines of data.
-    Handles reconnection logic.
-    If debug is True, prints raw data received.
+    Background task that monitors the configuration file for changes.
     """
-    conn_attempts = 0
-    while conn_attempts < CONNECT_ATTEMPT_LIMIT:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((host, port))
-            print(f"Connected to dump1090 at {host}:{port}")
-
-            buffer = ""
-            while True:
-                data = s.recv(1024).decode("utf-8", errors="ignore")
-                if not data:
-                    break
-
-                if debug:
-                    print(f"DEBUG: Raw data received: {data.strip()}")
-
-                buffer += data
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    yield line
-
-        except socket.error as e:
-            print(f"Error connecting to dump1090 at {host}:{port}: {e}")
-            conn_attempts += 1
-            if conn_attempts < CONNECT_ATTEMPT_LIMIT:
-                print(f"Retrying in {CONNECT_ATTEMPT_DELAY} seconds...")
-                time.sleep(CONNECT_ATTEMPT_DELAY)
-        finally:
-            if "s" in locals() and s:
-                s.close()
-
-    print("Could not connect to dump1090 after multiple attempts. Exiting.")
-    return None
-
-
-def process_adsb_message(message, args, aircraft_db, last_sent_time):
-    """
-    Processes a single ADSB message, updates the aircraft database,
-    and broadcasts if necessary.
-    """
-    parsed_data = parse_adsb_message(message)
-
-    if not parsed_data or not parsed_data.get("hex_ident"):
-        if args.debug and message:
-            print(f"DEBUG: Skipping unparseable or invalid message: {message}")
+    if not config.config_path or not os.path.exists(config.config_path):
         return
 
-    hex_ident = parsed_data["hex_ident"]
-
-    # Get or create the aircraft entry in our database
-    aircraft = aircraft_db.get(hex_ident, {})
-
-    # Update the aircraft's data with any new non-empty values
-    for key, value in parsed_data.items():
-        if value is not None and value != "":
-            aircraft[key] = value
-
-    aircraft_db[hex_ident] = aircraft  # Store the updated data back
-
-    # Now, check if this aircraft has enough data to be broadcast
-    if aircraft.get("lat") and aircraft.get("callsign"):
-        current_time = time.time()
-
-        # Check rate-limiter
-        if (
-            hex_ident not in last_sent_time
-            or (current_time - last_sent_time[hex_ident]) > args.update_interval
-        ):
-            # Use the aggregated data from our database for the message
-            aggregated_data = aircraft_db[hex_ident]
-
-            # Send to Meshtastic device
-            if args.meshtastic_interface:
-                meshtastic_msg = format_meshtastic_message(aggregated_data)
-                print(f"Sending to Meshtastic: {meshtastic_msg}")
-                args.meshtastic_interface.sendText(meshtastic_msg)
-
-            # Send to MUDP network
-            if args.mudp and send_text_message:
-                mudp_msg = format_meshtastic_message(aggregated_data)
-                print(f"Broadcasting to MUDP: {mudp_msg}")
-                send_text_message(mudp_msg)
-
-            # If no output methods are active, just print to console
-            if not args.meshtastic_interface and not args.mudp:
-                meshtastic_msg = format_meshtastic_message(aggregated_data)
-                print(f"Output (simulated): {meshtastic_msg}")
-
-            # Update the last sent time
-            last_sent_time[hex_ident] = current_time
-            if args.debug:
-                callsign = aircraft.get("callsign").strip()
-                print(f"DEBUG: Broadcasted update for {hex_ident} ({callsign})")
-
-
-def format_meshtastic_message(aircraft_data):
-    """
-    Formats aircraft data into a multi-line string for Meshtastic,
-    ensuring it is under the 200-byte limit.
-
-    Example:
-    ✈️ BAW123
-    Alt: 38000ft
-    Spd: 450kt
-    Pos: 51.5000N, 0.1000W
-    """
-    MAX_LENGTH = 200
-    callsign = aircraft_data.get("callsign", "N/A").strip()
-    altitude = aircraft_data.get("altitude")
-    ground_speed = aircraft_data.get("ground_speed")
-    lat = aircraft_data.get("lat")
-    lon = aircraft_data.get("lon")
-
-    # Build the message line by line, ensuring it fits within MAX_LENGTH
-    final_lines = [f"✈️{callsign}"]
-
-    potential_additions = []
-    if altitude is not None:
-        potential_additions.append(f"Alt: {altitude}ft")
-    if ground_speed is not None:
-        potential_additions.append(f"Spd: {ground_speed}kt")
-    if lat is not None and lon is not None:
-        lat_str = f"{abs(lat):.4f}{'N' if lat >= 0 else 'S'}"
-        lon_str = f"{abs(lon):.4f}{'E' if lon >= 0 else 'W'}"
-        potential_additions.append(f"Pos: {lat_str}, {lon_str}")
-
-    for line in potential_additions:
-        # Check if adding the new line exceeds the length limit (+1 for newline)
-        if len("\n".join(final_lines + [line]).encode('utf-8')) > MAX_LENGTH:
-            break
-        final_lines.append(line)
-
-    return "\n".join(final_lines)
-
-
-def parse_adsb_message(message_str):
-    """
-    Parses a raw SBS-1 message string into a dictionary.
-    """
-    parts = message_str.strip().split(",")
-    if len(parts) == 22 and parts[0] == "MSG":
-        # Create a dictionary, replacing empty strings with None
-        msg_data = {key: (val if val else None) for key, val in zip(SBS1_FIELDS, parts)}
-
-        # Clean up and type cast some fields
-        for key in [
-            "transmission_type",
-            "altitude",
-            "ground_speed",
-            "track",
-            "vertical_rate",
-            "squawk",
-        ]:
-            if msg_data.get(key):
-                try:
-                    msg_data[key] = int(msg_data[key])
-                except (ValueError, TypeError):
-                    pass  # Keep as None if conversion fails
-
-        for key in ["lat", "lon"]:
-            if msg_data.get(key):
-                try:
-                    msg_data[key] = float(msg_data[key])
-                except (ValueError, TypeError):
-                    pass
-
-        # Booleans
-        for key in ["alert", "emergency", "spi", "is_on_ground"]:
-            if msg_data.get(key):
-                msg_data[key] = bool(int(msg_data[key]))
-
-        return msg_data
-    return None
-
-
-def main():
-    """
-    Main function to run the ADSB to Meshtastic connector.
-    """
-    args = setup_args()
-    print("Starting ADSB to Meshtastic connector...")
-
-    last_sent_time = {}
-    aircraft_db = {}
-
-    args.meshtastic_interface = None
-    if not args.no_meshtastic:
+    last_mtime = os.path.getmtime(config.config_path)
+    while True:
+        await asyncio.sleep(10)
         try:
-            if args.meshtastic_host:
-                print(
-                    "Attempting to connect to Meshtastic device at "
-                    f"{args.meshtastic_host}:{args.meshtastic_port}..."
-                )
-                args.meshtastic_interface = meshtastic.tcp_interface.TCPInterface(
-                    hostname=args.meshtastic_host, portNumber=args.meshtastic_port
-                )
-            else:
-                print("Attempting to connect to local Meshtastic device via serial...")
-                args.meshtastic_interface = (
-                    meshtastic.serial_interface.SerialInterface()
-                )
-            print("Successfully connected to Meshtastic device.")
+            current_mtime = os.path.getmtime(config.config_path)
+            if current_mtime > last_mtime:
+                logger.info(f"Config file {config.config_path} changed. Reloading settings...")
+                with open(config.config_path, 'r') as f:
+                    new_data = yaml.safe_load(f) or {}
+                    config.radius = new_data.get('radius', config.radius)
+                    config.min_alt = new_data.get('min_alt', config.min_alt)
+                    config.max_alt = new_data.get('max_alt', config.max_alt)
+                    config.home_lat = new_data.get('home_lat', config.home_lat)
+                    config.home_lon = new_data.get('home_lon', config.home_lon)
+                    config.update_interval = new_data.get('update_interval', config.update_interval)
+                    config.debug = new_data.get('debug', config.debug)
+                    if config.debug: logging.getLogger().setLevel(logging.DEBUG)
+                    else: logging.getLogger().setLevel(logging.INFO)
+                last_mtime = current_mtime
+                logger.info("Settings reloaded successfully.")
         except Exception as e:
-            if args.meshtastic_host:
-                print(
-                    "Warning: Could not connect to Meshtastic device at "
-                    f"{args.meshtastic_host}. {e}"
-                )
-            else:
-                print("No local Meshtastic device found.")
+            logger.error(f"Error reloading config: {e}")
 
-    if args.mudp:
-        if conn:
-            print(
-                "Initializing MUDP broadcasting to "
-                f"{args.mudp_host}:{args.mudp_port}..."
-            )
-            conn.setup_multicast(args.mudp_host, args.mudp_port)
-            node.node_id = args.mudp_node_id
-            node.long_name = args.mudp_node_longname
-            node.short_name = args.mudp_node_shortname
-            print(f"MUDP Gateway Node ID: {node.node_id}, Name: {node.long_name}")
-        else:
-            print("MUDP library not found. Please install it with 'pip install mudp'")
-            args.mudp = False
-
-    dump1090_stream = connect_to_dump1090(
-        args.dump1090_host, args.dump1090_port, debug=args.debug
-    )
-
-    if dump1090_stream:
+async def connect_to_dump1090(host: str, port: int) -> AsyncGenerator[str, None]:
+    """
+    Async generator for lines from the dump1090 stream.
+    """
+    attempts = 0
+    while attempts < CONNECT_ATTEMPT_LIMIT:
         try:
-            for message in dump1090_stream:
-                process_adsb_message(message, args, aircraft_db, last_sent_time)
-        except KeyboardInterrupt:
-            print("\nExiting...")
+            logger.info(f"Connecting to dump1090 at {host}:{port}...")
+            reader, writer = await asyncio.open_connection(host, port)
+            logger.info(f"Connected to dump1090.")
+            while True:
+                data = await reader.read(4096)
+                if not data: break
+                for line in data.decode('utf-8', errors='ignore').splitlines():
+                    yield line
+        except (OSError, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError): raise
+            logger.error(f"Connection error: {e}")
+            attempts += 1
+            await asyncio.sleep(CONNECT_ATTEMPT_DELAY)
         finally:
-            if args.meshtastic_interface and hasattr(
-                args.meshtastic_interface, "_socket"
-            ):
-                args.meshtastic_interface.close()
+            if 'writer' in locals():
+                writer.close()
+                await writer.wait_closed()
+    logger.error("Could not connect to dump1090 after multiple attempts.")
 
+async def process_adsb_message(message: str, config: Config, db: DatabaseManager, last_sent: Dict[str, float], interface: Any) -> None:
+    """
+    Processes a single message and broadcasts if necessary.
+    """
+    parsed = parse_adsb_message(message)
+    if not parsed or 'hex_ident' not in parsed: return
 
-if __name__ == "__main__":
-    main()
+    hex_ident = parsed['hex_ident']
+    aircraft = await db.update_aircraft(hex_ident, parsed)
+
+    # Filtering
+    if aircraft.get('lat') is None or aircraft.get('callsign') is None: return
+    
+    alt = aircraft.get('altitude', 0)
+    if config.min_alt is not None and alt < config.min_alt: return
+    if config.max_alt is not None and alt > config.max_alt: return
+
+    if config.radius is not None and config.home_lat is not None and config.home_lon is not None:
+        if calculate_distance(config.home_lat, config.home_lon, aircraft['lat'], aircraft['lon']) > config.radius:
+            return
+
+    # Broadcast
+    now = time.time()
+    is_emergency = aircraft.get('squawk') in [7500, 7600, 7700]
+    
+    if is_emergency or hex_ident not in last_sent or (now - last_sent[hex_ident]) > config.update_interval:
+        msg = format_meshtastic_message(aircraft)
+        if is_emergency: msg = f"🆘ALERT: {msg}"
+        
+        if interface:
+            logger.info(f"Sending to Meshtastic: {msg}")
+            await asyncio.to_thread(interface.sendText, msg)
+        
+        if config.mudp:
+            # Try standalone function first, then connection method
+            sender = send_text_message or (conn.send_text_message if conn and hasattr(conn, 'send_text_message') else None)
+            if sender:
+                logger.info(f"Broadcasting to MUDP: {msg}")
+                await asyncio.to_thread(sender, msg)
+            else:
+                logger.warning("MUDP enabled but send_text_message function not found.")
+            
+        if not interface and not config.mudp:
+            logger.info(f"Output (simulated): {msg}")
+
+        last_sent[hex_ident] = now
+
+def format_meshtastic_message(data: Dict[str, Any]) -> str:
+    callsign = str(data.get('callsign', 'N/A')).strip()
+    alt = data.get('altitude', 0)
+    lat = data.get('lat', 0.0)
+    lon = data.get('lon', 0.0)
+    lat_str = f"{abs(lat):.2f}{'N' if lat >= 0 else 'S'}"
+    lon_str = f"{abs(lon):.2f}{'E' if lon >= 0 else 'W'}"
+    return f"✈️{callsign} {alt}ft {lat_str}/{lon_str}"
+
+def parse_adsb_message(message_str: str) -> Optional[Dict[str, Any]]:
+    parts = message_str.strip().split(',')
+    if len(parts) != 22 or parts[0] != 'MSG': return None
+    
+    raw = {key: (val if val else None) for key, val in zip(SBS1_FIELDS, parts)}
+    try:
+        data = {
+            'hex_ident': raw['hex_ident'],
+            'callsign': raw['callsign'],
+            'altitude': int(raw['altitude']) if raw['altitude'] else None,
+            'ground_speed': int(raw['ground_speed']) if raw['ground_speed'] else None,
+            'track': int(raw['track']) if raw['track'] else None,
+            'lat': float(raw['lat']) if raw['lat'] else None,
+            'lon': float(raw['lon']) if raw['lon'] else None,
+            'vertical_rate': int(raw['vertical_rate']) if raw['vertical_rate'] else None,
+            'squawk': int(raw['squawk']) if raw['squawk'] else None,
+            'alert': bool(int(raw['alert'])) if raw['alert'] else None,
+            'emergency': bool(int(raw['emergency'])) if raw['emergency'] else None,
+        }
+        return data
+    except (ValueError, TypeError):
+        return None
+
+async def main() -> None:
+    config = setup_config()
+    db = DatabaseManager(DB_FILENAME)
+    await db.init_db()
+
+    interface = None
+    if not config.no_meshtastic and meshtastic:
+        try:
+            if config.meshtastic_host:
+                interface = await asyncio.to_thread(meshtastic.tcp_interface.TCPInterface, hostname=config.meshtastic_host, portNumber=config.meshtastic_port)
+            else:
+                interface = await asyncio.to_thread(meshtastic.serial_interface.SerialInterface)
+            logger.info("Connected to Meshtastic device.")
+        except Exception as e:
+            logger.warning(f"Could not connect to Meshtastic: {e}")
+
+    if config.mudp and conn:
+        logger.info(f"Initializing MUDP at {config.mudp_host}:{config.mudp_port}")
+        await asyncio.to_thread(conn.setup_multicast, config.mudp_host, config.mudp_port)
+        node.node_id = config.mudp_node_id
+        node.long_name = config.mudp_node_longname
+        node.short_name = config.mudp_node_shortname
+
+    dash = DashboardServer(db, port=config.web_port)
+    await dash.start()
+    asyncio.create_task(config_watcher(config))
+
+    last_sent: Dict[str, float] = {}
+    try:
+        async for line in connect_to_dump1090(config.dump1090_host, config.dump1090_port):
+            await process_adsb_message(line, config, db, last_sent, interface)
+    except asyncio.CancelledError:
+        logger.info("Shutting down...")
+    finally:
+        if interface:
+            await asyncio.to_thread(interface.close)
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

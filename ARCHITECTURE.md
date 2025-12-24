@@ -25,4 +25,12 @@ The SBS-1 format was chosen as the best compromise for this project's goals:
 -   **Broad Compatibility:** The SBS-1 format is a long-standing, de facto standard supported by nearly all `dump1090` forks and many other ADSB decoders. This ensures the script will work for the widest possible range of user setups.
 -   **Sufficient Detail:** While not as detailed as the raw Beast format, the SBS-1 stream contains all the necessary fields (callsign, position, altitude, speed, etc.) to fulfill the requirements of this project.
 
-The main drawback of the SBS-1 format is that data for a single aircraft is fragmented across multiple message types. This was addressed by implementing a stateful in-memory database to aggregate the messages, which provides a robust and reliable way to build a complete picture of each aircraft before broadcasting.
+The main drawback of the SBS-1 format is that data for a single aircraft is fragmented across multiple message types. This was addressed by implementing a **persistent SQLite database** to aggregate the messages, which provides a robust and reliable way to build a complete picture of each aircraft before broadcasting - even across script restarts.
+
+## Async Architecture
+
+As of version 2.1.0, Planetastic uses `asyncio` for its core event loop. This change was motivated by:
+
+1.  **Concurrency:** Reading from the ADSB stream is now decoupled from the broadcasting logic. If a Meshtastic device or MUDP broadcast experiences temporary latency, it won't block the ingestion of new ADSB messages.
+2.  **Scalability:** The async model allows for the easy addition of concurrent background tasks, such as interactive mesh bots, web servers, or periodic database maintenance, without complex threading.
+3.  **Resource Efficiency:** Async non-blocking I/O is more efficient than multi-threading for many-to-one connection scenarios.

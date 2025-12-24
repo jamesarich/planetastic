@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  planetastic:
+    build: .
+    container_name: planetastic
+    network_mode: host # Use host network to easily reach local dump1090/Meshtastic
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./planetastic.db:/app/planetastic.db
+    restart: unless-stopped
+    command: [ "--config", "config.yaml" ]
