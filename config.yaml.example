@@ -35,3 +35,23 @@
 # mudp_node_id: '!adsb-gw'
 # mudp_node_longname: 'ADSB Gateway'
 # mudp_node_shortname: 'ADSB'
+ 
+# --- General Settings ---
+# Seconds before sending a new update for the same aircraft.
+# update_interval: 300
+# Enable debug logging (True/False).
+# debug: false
+
+# --- Filtering Settings ---
+# Your station's latitude and longitude (required for radius filtering).
+# home_lat: 51.5074
+# home_lon: -0.1278
+# Maximum radius in kilometers for broadcasts.
+# radius: 50.0
+# Altitude range filter in feet.
+# min_alt: 0
+# max_alt: 45000
+
+# --- Dashboard Settings ---
+# The port for the local web dashboard.
+# web_port: 8080

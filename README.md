@@ -1,4 +1,5 @@
 # Planetastic: An ADSB to Meshtastic Connector
+**v2.1.0**
 
 This project provides a Python script, `planetastic.py`, that connects a local ADSB receiver (like `dump1090`) to a Meshtastic network. It listens for aircraft data and broadcasts selected information to your personal mesh or local network.
 
@@ -6,12 +7,14 @@ This project provides a Python script, `planetastic.py`, that connects a local A
 
 The script connects to a running `dump1090` instance, which is responsible for receiving and demodulating ADSB signals from an SDR. It reads the parsed aircraft data stream (in SBS-1 format), which is often fragmented across multiple messages for a single aircraft.
 
-To handle this, the script maintains an in-memory database of all aircraft it has seen. As new messages arrive, the script updates the corresponding aircraft's record with the latest information. It will only broadcast an update for an aircraft once its record contains both a callsign and a position.
+To handle this, the script maintains a persistent **SQLite database** (`planetastic.db`) of all aircraft it has seen. As new messages arrive, the script updates the corresponding aircraft's record with the latest information. It will only broadcast an update for an aircraft once its record contains both a callsign and a position.
 
 The script can output the aggregated data in two independent ways:
 
 1.  **To a Meshtastic Device:** Formats a concise text message and sends it to a connected Meshtastic device (either local via USB/Serial or remote via TCP).
 2.  **To the Local Network via MUDP:** Broadcasts each aircraft's information as a `TextMessage` from a single, static gateway node. This allows other applications on the network to see the stream of aircraft data.
+
+Additionally, a local **Web Dashboard** is available to visualize all tracked aircraft in real-time.
 
 These outputs can be used independently or together.
 
@@ -23,15 +26,16 @@ To avoid spamming the network, the script keeps track of each aircraft and only 
 
 2.  **A Meshtastic device (Optional).** If you want to send messages to the Meshtastic network, you need a compatible LoRa radio connected locally via USB or accessible over your network.
 
-3.  **Python 3.**
+3.  **Python 3.11 or later.**
 
 ## Installation
 
 1.  **Clone this repository.**
-2.  **Install the required Python libraries:**
+3.  **Install the package and dependencies:**
     ```bash
-    pip install -r requirements.txt
+    pip install .
     ```
+    *Alternatively, you can just install the requirements:* `pip install -r requirements.txt`
 
 ## Usage
 
@@ -73,6 +77,10 @@ python planetastic.py --help
 -   `--mudp-port`: The MUDP multicast port.
 -   `--mudp-node-id`, `--mudp-node-longname`, `--mudp-node-shortname`: Set the static identity for MUDP broadcasts.
 -   `--update-interval`: Seconds before sending a new update for the same aircraft.
+-   `--home-lat`, `--home-lon`: Your station's position (required for geofencing).
+-   `--radius`: Maximum broadcast distance in km.
+-   `--min-alt`, `--max-alt`: Altitude range filter in feet.
+-   `--web-port`: The port for the local web dashboard (default: 8080).
 -   `--debug`: Enable debug logging to print raw data from dump1090.
 
 ### Examples
@@ -96,6 +104,36 @@ python planetastic.py --meshtastic-host 192.168.1.200
 ```bash
 python planetastic.py --mudp
 ```
+
+**Only broadcast aircraft within 50km and below 10,000ft:**
+```bash
+python planetastic.py --home-lat 51.5 --home-lon -0.1 --radius 50 --max-alt 10000
+```
+
+### Hot Reloading
+If you use a configuration file (`--config config.yaml`), the script will monitor it for changes. Updating filtering settings like `radius`, `min_alt`, or `max_alt` in the YAML file will be reflected in the running script within 10 seconds, without requiring a restart.
+
+## Docker Deployment
+
+You can run Planetastic as a Docker container for easy deployment on servers or Raspberry Pis.
+
+### Using Docker Compose
+1. Ensure you have `config.yaml` set up in the project directory.
+2. Run:
+   ```bash
+   docker-compose up -d
+   ```
+This will mount your config file and persist the database to your local machine.
+
+### Environment Variables
+For containerized deployments, you can also use environment variables to override defaults:
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `DUMP1090_HOST` | Hostname of the dump1090 instance. | `localhost` |
+| `DUMP1090_PORT` | Port for the SBS-1 stream. | `30003` |
+| `MESHTASTIC_HOST` | IP/Hostname of a remote Meshtastic device. | - |
+| `MESHTASTIC_PORT` | Port for the remote Meshtastic device. | `4403` |
 
 ## Troubleshooting
 
