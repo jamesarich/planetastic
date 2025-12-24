@@ -9,11 +9,6 @@ import time
 import argparse
 import yaml
 import os
-import asyncio
-import logging
-from dataclasses import dataclass
-from typing import Dict, Any, Optional, AsyncGenerator
-
 try:
     import meshtastic
     import meshtastic.serial_interface
@@ -47,11 +42,28 @@ DB_FILENAME = "planetastic.db"
 
 # --- SBS-1 Message Fields ---
 SBS1_FIELDS = [
-    'message_type', 'transmission_type', 'session_id', 'aircraft_id',
-    'hex_ident', 'flight_id', 'generated_date', 'generated_time',
-    'logged_date', 'logged_time', 'callsign', 'altitude',
-    'ground_speed', 'track', 'lat', 'lon', 'vertical_rate',
-    'squawk', 'alert', 'emergency', 'spi', 'is_on_ground'
+    "message_type",
+    "transmission_type",
+    "session_id",
+    "aircraft_id",
+    "hex_ident",
+    "flight_id",
+    "generated_date",
+    "generated_time",
+    "logged_date",
+    "logged_time",
+    "callsign",
+    "altitude",
+    "ground_speed",
+    "track",
+    "lat",
+    "lon",
+    "vertical_rate",
+    "squawk",
+    "alert",
+    "emergency",
+    "spi",
+    "is_on_ground",
 ]
 
 @dataclass
@@ -282,7 +294,7 @@ async def main() -> None:
     await db.init_db()
 
     interface = None
-    if not config.no_meshtastic:
+    if not config.no_meshtastic and meshtastic:
         try:
             if config.meshtastic_host:
                 interface = await asyncio.to_thread(meshtastic.tcp_interface.TCPInterface, hostname=config.meshtastic_host, portNumber=config.meshtastic_port)

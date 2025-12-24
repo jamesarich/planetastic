@@ -3,6 +3,9 @@
 
 This project provides a Python script, `planetastic.py`, that connects a local ADSB receiver (like `dump1090`) to a Meshtastic network. It listens for aircraft data and broadcasts selected information to your personal mesh or local network.
 
+<img width="1272" height="788" alt="image" src="https://github.com/user-attachments/assets/fdccde47-daef-4959-a729-52567059292b" />
+
+
 ## How It Works
 
 The script connects to a running `dump1090` instance, which is responsible for receiving and demodulating ADSB signals from an SDR. It reads the parsed aircraft data stream (in SBS-1 format), which is often fragmented across multiple messages for a single aircraft.
@@ -149,6 +152,25 @@ If you see a "Connection refused" error, or if the script connects but no packet
 If the script reports "No local Meshtastic device found", it means it could not detect a device connected via USB.
 -   Ensure your device is properly connected.
 -   If your device is network-connected, you must specify its IP address using the `--meshtastic-host` argument.
+
+## Development
+
+To contribute to this project, you'll need to set up a development environment.
+
+1.  **Install development dependencies:**
+    ```bash
+    pip install -r requirements-dev.txt
+    ```
+
+2.  **Set up pre-commit hooks:**
+    This project uses `pre-commit` to ensure code quality. The hooks will automatically format and lint your code before you commit.
+    ```bash
+    pre-commit install
+    ```
+    Now, every time you commit, the hooks will run. You can also run them manually on all files:
+    ```bash
+    pre-commit run --all-files
+    ```
 
 ## Acknowledgements
 
